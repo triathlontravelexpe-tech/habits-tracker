@@ -24,11 +24,22 @@ interface Habit {
   completedDates: string[];
   reminderTime?: string;
   hasReminder: boolean;
+  selectedDays: number[]; // 0 = Dimanche, 1 = Lundi, ... 6 = Samedi
 }
 
 const HABITS_STORAGE_KEY = '@habits_tracker_habits';
 
 const AVAILABLE_ICONS = ['💪', '📚', '💧', '🏃', '🧘', '🥗', '😴', '🎯', '🎨', '🎵', '📱', '🌱'];
+
+const DAYS_OF_WEEK = [
+  { id: 1, name: 'Lundi', short: 'Lun' },
+  { id: 2, name: 'Mardi', short: 'Mar' },
+  { id: 3, name: 'Mercredi', short: 'Mer' },
+  { id: 4, name: 'Jeudi', short: 'Jeu' },
+  { id: 5, name: 'Vendredi', short: 'Ven' },
+  { id: 6, name: 'Samedi', short: 'Sam' },
+  { id: 0, name: 'Dimanche', short: 'Dim' },
+];
 
 export default function App() {
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -39,6 +50,7 @@ export default function App() {
   const [hasReminder, setHasReminder] = useState(false);
   const [reminderTime, setReminderTime] = useState('09:00');
   const [currentView, setCurrentView] = useState<'main' | 'history'>('main');
+  const [selectedDays, setSelectedDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 0]); // Tous les jours par défaut
 
   const theme = isDarkMode ? darkTheme : lightTheme;
 
@@ -53,8 +65,12 @@ export default function App() {
       if (habitsData) {
         const parsedHabits: Habit[] = JSON.parse(habitsData);
         const today = new Date().toDateString();
+        const todayDayOfWeek = new Date().getDay();
+        
         const updatedHabits = parsedHabits.map(habit => ({
           ...habit,
+          // Assurer la compatibilité avec les anciennes habitudes
+          selectedDays: habit.selectedDays || [1, 2, 3, 4, 5, 6, 0],
           completed: habit.completedDates.includes(today),
         }));
         setHabits(updatedHabits);
@@ -84,6 +100,7 @@ export default function App() {
         completedDates: [],
         reminderTime: hasReminder ? reminderTime : undefined,
         hasReminder,
+        selectedDays: selectedDays.length > 0 ? selectedDays : [1, 2, 3, 4, 5, 6, 0],
       };
 
       const updatedHabits = [...habits, newHabit];
@@ -94,6 +111,7 @@ export default function App() {
       setSelectedIcon('💪');
       setHasReminder(false);
       setReminderTime('09:00');
+      setSelectedDays([1, 2, 3, 4, 5, 6, 0]);
       setModalVisible(false);
     }
   };
@@ -145,54 +163,105 @@ export default function App() {
     );
   };
 
-  // Calculer les statistiques
+  // Calculer les statistiques (seulement les habitudes du jour)
   const getStats = () => {
-    const total = habits.length;
-    const completed = habits.filter(h => h.completed).length;
+    const todayDayOfWeek = new Date().getDay();
+    const todayHabits = habits.filter(habit => habit.selectedDays.includes(todayDayOfWeek));
+    const total = todayHabits.length;
+    const completed = todayHabits.filter(h => h.completed).length;
     return { total, completed, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
   };
 
+  // Fonction pour basculer la sélection d'un jour
+  const toggleDay = (dayId: number) => {
+    setSelectedDays(prev => {
+      if (prev.includes(dayId)) {
+        return prev.filter(d => d !== dayId);
+      } else {
+        return [...prev, dayId];
+      }
+    });
+  };
+
+  // Filtrer les habitudes selon le jour actuel
+  const getTodayHabits = () => {
+    const todayDayOfWeek = new Date().getDay();
+    return habits.filter(habit => habit.selectedDays.includes(todayDayOfWeek));
+  };
+
   // Rendu d'un élément d'habitude
-  const renderHabit = ({ item }: { item: Habit }) => (
-    <View style={[styles.habitItem, { backgroundColor: theme.cardBackground }]}>
-      <TouchableOpacity
-        style={styles.habitContent}
-        onPress={() => toggleHabit(item.id)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.habitLeft}>
-          <Text style={styles.habitIcon}>{item.icon}</Text>
-          <View style={styles.habitInfo}>
-            <Text style={[styles.habitName, { color: theme.text }]}>{item.name}</Text>
-            {item.hasReminder && (
-              <Text style={[styles.reminderText, { color: theme.textSecondary }]}>
-                🔔 {item.reminderTime}
+  const renderHabit = ({ item }: { item: Habit }) => {
+    const todayDayOfWeek = new Date().getDay();
+    const isActiveToday = item.selectedDays.includes(todayDayOfWeek);
+    
+    return (
+      <View style={[
+        styles.habitItem, 
+        { 
+          backgroundColor: theme.cardBackground,
+          opacity: isActiveToday ? 1 : 0.5
+        }
+      ]}>
+        <TouchableOpacity
+          style={styles.habitContent}
+          onPress={() => isActiveToday && toggleHabit(item.id)}
+          activeOpacity={0.7}
+          disabled={!isActiveToday}
+        >
+          <View style={styles.habitLeft}>
+            <Text style={styles.habitIcon}>{item.icon}</Text>
+            <View style={styles.habitInfo}>
+              <Text style={[styles.habitName, { color: theme.text }]}>{item.name}</Text>
+              <View style={styles.habitDays}>
+                {DAYS_OF_WEEK.filter(day => item.selectedDays.includes(day.id)).map(day => (
+                  <Text key={day.id} style={[
+                    styles.dayBadge, 
+                    { 
+                      color: day.id === todayDayOfWeek ? theme.primary : theme.textSecondary,
+                      fontWeight: day.id === todayDayOfWeek ? 'bold' : 'normal'
+                    }
+                  ]}>
+                    {day.short}
+                  </Text>
+                ))}
+              </View>
+              {item.hasReminder && (
+                <Text style={[styles.reminderText, { color: theme.textSecondary }]}>
+                  🔔 {item.reminderTime}
+                </Text>
+              )}
+            </View>
+          </View>
+          <View style={styles.habitRight}>
+            {isActiveToday && (
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    backgroundColor: item.completed ? '#4CAF50' : 'transparent',
+                    borderColor: item.completed ? '#4CAF50' : theme.border,
+                  },
+                ]}
+              >
+                {item.completed && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+            )}
+            {!isActiveToday && (
+              <Text style={[styles.notTodayText, { color: theme.textSecondary }]}>
+                Pas aujourd'hui
               </Text>
             )}
           </View>
-        </View>
-        <View style={styles.habitRight}>
-          <View
-            style={[
-              styles.checkbox,
-              {
-                backgroundColor: item.completed ? '#4CAF50' : 'transparent',
-                borderColor: item.completed ? '#4CAF50' : theme.border,
-              },
-            ]}
-          >
-            {item.completed && <Text style={styles.checkmark}>✓</Text>}
-          </View>
-        </View>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => deleteHabit(item.id)}
-      >
-        <Text style={styles.deleteButtonText}>🗑️</Text>
-      </TouchableOpacity>
-    </View>
-  );
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => deleteHabit(item.id)}
+        >
+          <Text style={styles.deleteButtonText}>🗑️</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   // Rendu de la vue principale
   const renderMainView = () => {
@@ -233,6 +302,13 @@ export default function App() {
               </Text>
               <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
                 Appuyez sur + pour commencer !
+              </Text>
+            </View>
+          }
+          ListHeaderComponent={
+            <View style={styles.habitListHeader}>
+              <Text style={[styles.sectionHeaderText, { color: theme.text }]}>
+                Habitudes du jour ({new Date().toLocaleDateString('fr-FR', { weekday: 'long' })})
               </Text>
             </View>
           }
@@ -404,6 +480,41 @@ export default function App() {
                 value={newHabitName}
                 onChangeText={setNewHabitName}
               />
+
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>
+                Jours de la semaine :
+              </Text>
+              <Text style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
+                Sélectionnez les jours où vous voulez pratiquer cette habitude
+              </Text>
+              <View style={styles.daysSelector}>
+                {DAYS_OF_WEEK.map(day => (
+                  <TouchableOpacity
+                    key={day.id}
+                    style={[
+                      styles.dayButton,
+                      {
+                        backgroundColor: selectedDays.includes(day.id) 
+                          ? theme.primary 
+                          : theme.background,
+                        borderColor: theme.border,
+                      }
+                    ]}
+                    onPress={() => toggleDay(day.id)}
+                  >
+                    <Text style={[
+                      styles.dayButtonText,
+                      {
+                        color: selectedDays.includes(day.id) 
+                          ? 'white' 
+                          : theme.text
+                      }
+                    ]}>
+                      {day.short}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <Text style={[styles.sectionTitle, { color: theme.text }]}>
                 Choisir une icône :
@@ -605,6 +716,34 @@ const styles = StyleSheet.create({
   habitInfo: {
     flex: 1,
   },
+  habitDays: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  dayBadge: {
+    fontSize: 10,
+    marginRight: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    overflow: 'hidden',
+  },
+  notTodayText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  habitListHeader: {
+    marginBottom: 16,
+  },
+  sectionHeaderText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    textTransform: 'capitalize',
+  },
   habitName: {
     fontSize: 16,
     fontWeight: '600',
@@ -698,6 +837,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 12,
+    marginTop: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  daysSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  dayButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    margin: 4,
+    minWidth: 45,
+    alignItems: 'center',
+  },
+  dayButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   iconSelector: {
     marginBottom: 20,
