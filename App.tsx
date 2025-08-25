@@ -16,6 +16,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 // Types
@@ -36,13 +37,15 @@ interface HabitCompletion {
 }
 
 // Configuration des notifications
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 const HABITS_STORAGE_KEY = '@habits_tracker_habits';
 const COMPLETIONS_STORAGE_KEY = '@habits_tracker_completions';
@@ -68,6 +71,10 @@ export default function App() {
 
   // Permissions pour les notifications
   const requestNotificationPermissions = async () => {
+    if (Platform.OS === 'web') {
+      return; // Pas de notifications sur web
+    }
+    
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert(
@@ -139,7 +146,7 @@ export default function App() {
 
   // Programmer une notification
   const scheduleNotification = async (habit: Habit) => {
-    if (!habit.reminderTime) return;
+    if (!habit.reminderTime || Platform.OS === 'web') return;
 
     const [hours, minutes] = habit.reminderTime.split(':').map(Number);
     
@@ -200,7 +207,7 @@ export default function App() {
           style: 'destructive',
           onPress: async () => {
             const habit = habits.find(h => h.id === id);
-            if (habit?.notificationId) {
+            if (habit?.notificationId && Platform.OS !== 'web') {
               await Notifications.cancelScheduledNotificationAsync(habit.notificationId);
             }
             const updatedHabits = habits.filter(habit => habit.id !== id);
