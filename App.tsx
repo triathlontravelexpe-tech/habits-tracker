@@ -1,0 +1,865 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Alert,
+  StatusBar,
+  ScrollView,
+  Switch,
+  Dimensions,
+} from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
+import { Ionicons } from '@expo/vector-icons';
+
+// Types
+interface Habit {
+  id: string;
+  name: string;
+  icon: string;
+  completed: boolean;
+  completedDates: string[];
+  reminderTime?: string;
+  hasReminder: boolean;
+  notificationId?: string;
+}
+
+interface HabitCompletion {
+  date: string;
+  completedHabits: string[];
+}
+
+// Configuration des notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+const HABITS_STORAGE_KEY = '@habits_tracker_habits';
+const COMPLETIONS_STORAGE_KEY = '@habits_tracker_completions';
+
+const AVAILABLE_ICONS = ['💪', '📚', '💧', '🏃', '🧘', '🥗', '😴', '🎯', '🎨', '🎵', '📱', '🌱'];
+
+export default function App() {
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newHabitName, setNewHabitName] = useState('');
+  const [selectedIcon, setSelectedIcon] = useState('💪');
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [hasReminder, setHasReminder] = useState(false);
+  const [reminderTime, setReminderTime] = useState('09:00');
+  const [currentView, setCurrentView] = useState<'main' | 'history' | 'stats'>('main');
+
+  const theme = isDarkMode ? darkTheme : lightTheme;
+
+  useEffect(() => {
+    loadHabits();
+    requestNotificationPermissions();
+  }, []);
+
+  // Permissions pour les notifications
+  const requestNotificationPermissions = async () => {
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permissions requises',
+        'Les notifications sont nécessaires pour les rappels d\'habitudes.'
+      );
+    }
+  };
+
+  // Chargement des données
+  const loadHabits = async () => {
+    try {
+      const habitsData = await AsyncStorage.getItem(HABITS_STORAGE_KEY);
+      if (habitsData) {
+        const parsedHabits: Habit[] = JSON.parse(habitsData);
+        // Réinitialiser le statut de completion pour le jour actuel
+        const today = new Date().toDateString();
+        const updatedHabits = parsedHabits.map(habit => ({
+          ...habit,
+          completed: habit.completedDates.includes(today),
+        }));
+        setHabits(updatedHabits);
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement des habitudes:', error);
+    }
+  };
+
+  // Sauvegarde des données
+  const saveHabits = async (habitsToSave: Habit[]) => {
+    try {
+      await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habitsToSave));
+    } catch (error) {
+      console.error('Erreur lors de la sauvegarde:', error);
+    }
+  };
+
+  // Ajouter une nouvelle habitude
+  const addHabit = async () => {
+    if (newHabitName.trim()) {
+      const newHabit: Habit = {
+        id: Date.now().toString(),
+        name: newHabitName.trim(),
+        icon: selectedIcon,
+        completed: false,
+        completedDates: [],
+        reminderTime: hasReminder ? reminderTime : undefined,
+        hasReminder,
+        notificationId: undefined,
+      };
+
+      // Programmer la notification si nécessaire
+      if (hasReminder) {
+        await scheduleNotification(newHabit);
+      }
+
+      const updatedHabits = [...habits, newHabit];
+      setHabits(updatedHabits);
+      await saveHabits(updatedHabits);
+
+      // Reset du formulaire
+      setNewHabitName('');
+      setSelectedIcon('💪');
+      setHasReminder(false);
+      setReminderTime('09:00');
+      setModalVisible(false);
+    }
+  };
+
+  // Programmer une notification
+  const scheduleNotification = async (habit: Habit) => {
+    if (!habit.reminderTime) return;
+
+    const [hours, minutes] = habit.reminderTime.split(':').map(Number);
+    
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Rappel d\'habitude',
+        body: `N'oubliez pas: ${habit.name} ${habit.icon}`,
+        sound: true,
+      },
+      trigger: {
+        hour: hours,
+        minute: minutes,
+        repeats: true,
+      },
+    });
+
+    habit.notificationId = notificationId;
+  };
+
+  // Basculer le statut d'une habitude
+  const toggleHabit = async (id: string) => {
+    const today = new Date().toDateString();
+    const updatedHabits = habits.map(habit => {
+      if (habit.id === id) {
+        const isCurrentlyCompleted = habit.completedDates.includes(today);
+        let newCompletedDates = [...habit.completedDates];
+
+        if (isCurrentlyCompleted) {
+          // Retirer la date d'aujourd'hui
+          newCompletedDates = newCompletedDates.filter(date => date !== today);
+        } else {
+          // Ajouter la date d'aujourd'hui
+          newCompletedDates.push(today);
+        }
+
+        return {
+          ...habit,
+          completed: !isCurrentlyCompleted,
+          completedDates: newCompletedDates,
+        };
+      }
+      return habit;
+    });
+
+    setHabits(updatedHabits);
+    await saveHabits(updatedHabits);
+  };
+
+  // Supprimer une habitude
+  const deleteHabit = async (id: string) => {
+    Alert.alert(
+      'Supprimer l\'habitude',
+      'Êtes-vous sûr de vouloir supprimer cette habitude ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            const habit = habits.find(h => h.id === id);
+            if (habit?.notificationId) {
+              await Notifications.cancelScheduledNotificationAsync(habit.notificationId);
+            }
+            const updatedHabits = habits.filter(habit => habit.id !== id);
+            setHabits(updatedHabits);
+            await saveHabits(updatedHabits);
+          },
+        },
+      ]
+    );
+  };
+
+  // Calculer les statistiques
+  const getStats = () => {
+    const total = habits.length;
+    const completed = habits.filter(h => h.completed).length;
+    return { total, completed, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
+  };
+
+  // Rendu d'un élément d'habitude
+  const renderHabit = ({ item }: { item: Habit }) => (
+    <View style={[styles.habitItem, { backgroundColor: theme.cardBackground }]}>
+      <TouchableOpacity
+        style={styles.habitContent}
+        onPress={() => toggleHabit(item.id)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.habitLeft}>
+          <Text style={styles.habitIcon}>{item.icon}</Text>
+          <View style={styles.habitInfo}>
+            <Text style={[styles.habitName, { color: theme.text }]}>{item.name}</Text>
+            {item.hasReminder && (
+              <Text style={[styles.reminderText, { color: theme.textSecondary }]}>
+                🔔 {item.reminderTime}
+              </Text>
+            )}
+          </View>
+        </View>
+        <View style={styles.habitRight}>
+          <View
+            style={[
+              styles.checkbox,
+              {
+                backgroundColor: item.completed ? '#4CAF50' : 'transparent',
+                borderColor: item.completed ? '#4CAF50' : theme.border,
+              },
+            ]}
+          >
+            {item.completed && (
+              <Ionicons name="checkmark" size={18} color="white" />
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.deleteButton}
+        onPress={() => deleteHabit(item.id)}
+      >
+        <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Rendu de la vue principale
+  const renderMainView = () => {
+    const stats = getStats();
+    
+    return (
+      <View style={styles.container}>
+        {/* En-tête avec statistiques */}
+        <View style={[styles.statsContainer, { backgroundColor: theme.cardBackground }]}>
+          <Text style={[styles.statsTitle, { color: theme.text }]}>
+            Aujourd'hui
+          </Text>
+          <Text style={[styles.statsText, { color: theme.textSecondary }]}>
+            {stats.completed} sur {stats.total} habitudes complétées
+          </Text>
+          <View style={styles.progressBar}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${stats.percentage}%` },
+              ]}
+            />
+          </View>
+          <Text style={[styles.percentage, { color: theme.primary }]}>
+            {stats.percentage}%
+          </Text>
+        </View>
+
+        {/* Liste des habitudes */}
+        <FlatList
+          data={habits}
+          renderItem={renderHabit}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.habitsList}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+                Aucune habitude ajoutée.
+              </Text>
+              <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+                Appuyez sur + pour commencer !
+              </Text>
+            </View>
+          }
+        />
+
+        {/* Bouton d'ajout */}
+        <TouchableOpacity
+          style={[styles.addButton, { backgroundColor: theme.primary }]}
+          onPress={() => setModalVisible(true)}
+        >
+          <Ionicons name="add" size={24} color="white" />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // Rendu de la vue historique (simple calendrier)
+  const renderHistoryView = () => {
+    const getDatesInMonth = () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const dates = [];
+      
+      for (let i = 1; i <= lastDay.getDate(); i++) {
+        dates.push(new Date(year, month, i));
+      }
+      return dates;
+    };
+
+    const dates = getDatesInMonth();
+    const today = new Date().toDateString();
+
+    return (
+      <View style={styles.container}>
+        <View style={[styles.header, { backgroundColor: theme.cardBackground }]}>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>
+            Historique - {new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
+          </Text>
+        </View>
+        
+        <ScrollView style={styles.calendarContainer}>
+          <View style={styles.calendar}>
+            {dates.map(date => {
+              const dateStr = date.toDateString();
+              const habitsCompletedToday = habits.filter(h => 
+                h.completedDates.includes(dateStr)
+              ).length;
+              const totalHabits = habits.length;
+              const completionRate = totalHabits > 0 ? habitsCompletedToday / totalHabits : 0;
+              
+              return (
+                <View
+                  key={dateStr}
+                  style={[
+                    styles.calendarDay,
+                    {
+                      backgroundColor: dateStr === today 
+                        ? theme.primary 
+                        : completionRate === 1 
+                          ? '#4CAF50' 
+                          : completionRate > 0.5 
+                            ? '#FFC107' 
+                            : completionRate > 0 
+                              ? '#FF9800'
+                              : theme.cardBackground,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.calendarDayText,
+                      {
+                        color: dateStr === today || completionRate > 0.5 ? 'white' : theme.text,
+                      },
+                    ]}
+                  >
+                    {date.getDate()}
+                  </Text>
+                  {habitsCompletedToday > 0 && (
+                    <Text
+                      style={[
+                        styles.calendarDayCount,
+                        {
+                          color: dateStr === today || completionRate > 0.5 ? 'white' : theme.textSecondary,
+                        },
+                      ]}
+                    >
+                      {habitsCompletedToday}/{totalHabits}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+        <StatusBar
+          barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+          backgroundColor={theme.background}
+        />
+
+        {/* Barre de navigation */}
+        <View style={[styles.tabBar, { backgroundColor: theme.cardBackground }]}>
+          <TouchableOpacity
+            style={[styles.tabItem, currentView === 'main' && { backgroundColor: theme.primary }]}
+            onPress={() => setCurrentView('main')}
+          >
+            <Ionicons 
+              name="home" 
+              size={20} 
+              color={currentView === 'main' ? 'white' : theme.textSecondary} 
+            />
+            <Text style={[
+              styles.tabText, 
+              { color: currentView === 'main' ? 'white' : theme.textSecondary }
+            ]}>
+              Accueil
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, currentView === 'history' && { backgroundColor: theme.primary }]}
+            onPress={() => setCurrentView('history')}
+          >
+            <Ionicons 
+              name="calendar" 
+              size={20} 
+              color={currentView === 'history' ? 'white' : theme.textSecondary} 
+            />
+            <Text style={[
+              styles.tabText, 
+              { color: currentView === 'history' ? 'white' : theme.textSecondary }
+            ]}>
+              Historique
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.themeToggle}
+            onPress={() => setIsDarkMode(!isDarkMode)}
+          >
+            <Ionicons 
+              name={isDarkMode ? "sunny" : "moon"} 
+              size={20} 
+              color={theme.textSecondary} 
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Contenu principal */}
+        {currentView === 'main' ? renderMainView() : renderHistoryView()}
+
+        {/* Modal d'ajout d'habitude */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: theme.cardBackground }]}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                Nouvelle habitude
+              </Text>
+
+              <TextInput
+                style={[styles.input, { 
+                  backgroundColor: theme.background, 
+                  color: theme.text,
+                  borderColor: theme.border 
+                }]}
+                placeholder="Nom de l'habitude"
+                placeholderTextColor={theme.textSecondary}
+                value={newHabitName}
+                onChangeText={setNewHabitName}
+              />
+
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>
+                Choisir une icône :
+              </Text>
+              <ScrollView horizontal style={styles.iconSelector}>
+                {AVAILABLE_ICONS.map(icon => (
+                  <TouchableOpacity
+                    key={icon}
+                    style={[
+                      styles.iconOption,
+                      selectedIcon === icon && styles.selectedIcon,
+                    ]}
+                    onPress={() => setSelectedIcon(icon)}
+                  >
+                    <Text style={styles.iconText}>{icon}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <View style={styles.reminderSection}>
+                <View style={styles.reminderToggle}>
+                  <Text style={[styles.reminderLabel, { color: theme.text }]}>
+                    Rappel quotidien
+                  </Text>
+                  <Switch
+                    value={hasReminder}
+                    onValueChange={setHasReminder}
+                    trackColor={{ false: theme.border, true: theme.primary }}
+                    thumbColor={hasReminder ? 'white' : '#f4f3f4'}
+                  />
+                </View>
+                {hasReminder && (
+                  <TextInput
+                    style={[styles.timeInput, { 
+                      backgroundColor: theme.background, 
+                      color: theme.text,
+                      borderColor: theme.border 
+                    }]}
+                    placeholder="09:00"
+                    placeholderTextColor={theme.textSecondary}
+                    value={reminderTime}
+                    onChangeText={setReminderTime}
+                  />
+                )}
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.cancelButton]}
+                  onPress={() => setModalVisible(false)}
+                >
+                  <Text style={styles.cancelButtonText}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.addHabitButton, { backgroundColor: theme.primary }]}
+                  onPress={addHabit}
+                >
+                  <Text style={styles.addButtonText}>Ajouter</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+// Thèmes
+const lightTheme = {
+  background: '#F8F9FA',
+  cardBackground: '#FFFFFF',
+  text: '#212529',
+  textSecondary: '#6C757D',
+  primary: '#007AFF',
+  border: '#E9ECEF',
+};
+
+const darkTheme = {
+  background: '#121212',
+  cardBackground: '#1E1E1E',
+  text: '#FFFFFF',
+  textSecondary: '#AAAAAA',
+  primary: '#007AFF',
+  border: '#333333',
+};
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+  },
+  container: {
+    flex: 1,
+    padding: 16,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  tabItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  tabText: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  themeToggle: {
+    marginLeft: 'auto',
+    padding: 8,
+  },
+  header: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  statsContainer: {
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 20,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  statsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  statsText: {
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#E9ECEF',
+    borderRadius: 4,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+    borderRadius: 4,
+  },
+  percentage: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  habitsList: {
+    paddingBottom: 80,
+  },
+  habitItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    marginBottom: 12,
+    borderRadius: 12,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  habitContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  habitLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  habitIcon: {
+    fontSize: 24,
+    marginRight: 16,
+  },
+  habitInfo: {
+    flex: 1,
+  },
+  habitName: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  reminderText: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  habitRight: {
+    marginLeft: 16,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  addButton: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '90%',
+    maxWidth: 400,
+    padding: 24,
+    borderRadius: 16,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  iconSelector: {
+    marginBottom: 20,
+  },
+  iconOption: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  selectedIcon: {
+    borderColor: '#007AFF',
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+  },
+  iconText: {
+    fontSize: 24,
+  },
+  reminderSection: {
+    marginBottom: 24,
+  },
+  reminderToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  reminderLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  timeInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButton: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#F8F9FA',
+    marginRight: 8,
+  },
+  addHabitButton: {
+    marginLeft: 8,
+  },
+  cancelButtonText: {
+    color: '#6C757D',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  addButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  calendarContainer: {
+    flex: 1,
+  },
+  calendar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  calendarDay: {
+    width: '13%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderRadius: 8,
+  },
+  calendarDayText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  calendarDayCount: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+});
