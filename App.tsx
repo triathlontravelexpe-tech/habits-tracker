@@ -58,6 +58,30 @@ export default function App() {
     loadHabits();
   }, []);
 
+  // Fonction pour nettoyer les données (utile pour déboguer)
+  const clearAllData = async () => {
+    Alert.alert(
+      'Nettoyer toutes les données',
+      'Cette action supprimera toutes vos habitudes. Êtes-vous sûr ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Confirmer',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem(HABITS_STORAGE_KEY);
+              setHabits([]);
+              Alert.alert('Succès', 'Toutes les données ont été supprimées');
+            } catch (error) {
+              console.error('Erreur lors du nettoyage:', error);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Chargement des données
   const loadHabits = async () => {
     try {
@@ -65,18 +89,22 @@ export default function App() {
       if (habitsData) {
         const parsedHabits: Habit[] = JSON.parse(habitsData);
         const today = new Date().toDateString();
-        const todayDayOfWeek = new Date().getDay();
         
         const updatedHabits = parsedHabits.map(habit => ({
           ...habit,
           // Assurer la compatibilité avec les anciennes habitudes
-          selectedDays: habit.selectedDays || [1, 2, 3, 4, 5, 6, 0],
-          completed: habit.completedDates.includes(today),
+          selectedDays: Array.isArray(habit.selectedDays) && habit.selectedDays.length > 0 
+            ? habit.selectedDays 
+            : [1, 2, 3, 4, 5, 6, 0],
+          completed: habit.completedDates?.includes(today) || false,
+          completedDates: Array.isArray(habit.completedDates) ? habit.completedDates : [],
         }));
         setHabits(updatedHabits);
       }
     } catch (error) {
       console.error('Erreur lors du chargement des habitudes:', error);
+      // En cas d'erreur, on repart avec une liste vide
+      setHabits([]);
     }
   };
 
@@ -91,7 +119,17 @@ export default function App() {
 
   // Ajouter une nouvelle habitude
   const addHabit = async () => {
-    if (newHabitName.trim()) {
+    if (newHabitName.trim() === '') {
+      Alert.alert('Erreur', 'Veuillez saisir un nom pour l\'habitude');
+      return;
+    }
+    
+    if (selectedDays.length === 0) {
+      Alert.alert('Erreur', 'Veuillez sélectionner au moins un jour');
+      return;
+    }
+
+    try {
       const newHabit: Habit = {
         id: Date.now().toString(),
         name: newHabitName.trim(),
@@ -100,19 +138,25 @@ export default function App() {
         completedDates: [],
         reminderTime: hasReminder ? reminderTime : undefined,
         hasReminder,
-        selectedDays: selectedDays.length > 0 ? selectedDays : [1, 2, 3, 4, 5, 6, 0],
+        selectedDays: [...selectedDays], // Copie du tableau
       };
 
       const updatedHabits = [...habits, newHabit];
       setHabits(updatedHabits);
       await saveHabits(updatedHabits);
 
+      // Reset du formulaire
       setNewHabitName('');
       setSelectedIcon('💪');
       setHasReminder(false);
       setReminderTime('09:00');
       setSelectedDays([1, 2, 3, 4, 5, 6, 0]);
       setModalVisible(false);
+      
+      Alert.alert('Succès', 'Habitude ajoutée avec succès !');
+    } catch (error) {
+      console.error('Erreur lors de l\'ajout:', error);
+      Alert.alert('Erreur', 'Impossible d\'ajouter l\'habitude');
     }
   };
 
@@ -166,7 +210,9 @@ export default function App() {
   // Calculer les statistiques (seulement les habitudes du jour)
   const getStats = () => {
     const todayDayOfWeek = new Date().getDay();
-    const todayHabits = habits.filter(habit => habit.selectedDays.includes(todayDayOfWeek));
+    const todayHabits = habits.filter(habit => 
+      Array.isArray(habit.selectedDays) && habit.selectedDays.includes(todayDayOfWeek)
+    );
     const total = todayHabits.length;
     const completed = todayHabits.filter(h => h.completed).length;
     return { total, completed, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
@@ -192,7 +238,8 @@ export default function App() {
   // Rendu d'un élément d'habitude
   const renderHabit = ({ item }: { item: Habit }) => {
     const todayDayOfWeek = new Date().getDay();
-    const isActiveToday = item.selectedDays.includes(todayDayOfWeek);
+    const selectedDaysArray = Array.isArray(item.selectedDays) ? item.selectedDays : [];
+    const isActiveToday = selectedDaysArray.includes(todayDayOfWeek);
     
     return (
       <View style={[
@@ -213,7 +260,7 @@ export default function App() {
             <View style={styles.habitInfo}>
               <Text style={[styles.habitName, { color: theme.text }]}>{item.name}</Text>
               <View style={styles.habitDays}>
-                {DAYS_OF_WEEK.filter(day => item.selectedDays.includes(day.id)).map(day => (
+                {DAYS_OF_WEEK.filter(day => selectedDaysArray.includes(day.id)).map(day => (
                   <Text key={day.id} style={[
                     styles.dayBadge, 
                     { 
@@ -451,6 +498,13 @@ export default function App() {
               {isDarkMode ? "☀️" : "🌙"}
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.clearDataButton}
+            onPress={clearAllData}
+          >
+            <Text style={{ fontSize: 16 }}>🗑️</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Contenu principal */}
@@ -636,6 +690,10 @@ const styles = StyleSheet.create({
   themeToggle: {
     marginLeft: 'auto',
     padding: 8,
+  },
+  clearDataButton: {
+    padding: 8,
+    marginLeft: 8,
   },
   header: {
     padding: 16,
