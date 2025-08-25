@@ -11,13 +11,9 @@ import {
   StatusBar,
   ScrollView,
   Switch,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 // Types
 interface Habit {
@@ -28,27 +24,9 @@ interface Habit {
   completedDates: string[];
   reminderTime?: string;
   hasReminder: boolean;
-  notificationId?: string;
-}
-
-interface HabitCompletion {
-  date: string;
-  completedHabits: string[];
-}
-
-// Configuration des notifications
-if (Platform.OS !== 'web') {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
-  });
 }
 
 const HABITS_STORAGE_KEY = '@habits_tracker_habits';
-const COMPLETIONS_STORAGE_KEY = '@habits_tracker_completions';
 
 const AVAILABLE_ICONS = ['💪', '📚', '💧', '🏃', '🧘', '🥗', '😴', '🎯', '🎨', '🎵', '📱', '🌱'];
 
@@ -60,29 +38,13 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [hasReminder, setHasReminder] = useState(false);
   const [reminderTime, setReminderTime] = useState('09:00');
-  const [currentView, setCurrentView] = useState<'main' | 'history' | 'stats'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'history'>('main');
 
   const theme = isDarkMode ? darkTheme : lightTheme;
 
   useEffect(() => {
     loadHabits();
-    requestNotificationPermissions();
   }, []);
-
-  // Permissions pour les notifications
-  const requestNotificationPermissions = async () => {
-    if (Platform.OS === 'web') {
-      return; // Pas de notifications sur web
-    }
-    
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'Permissions requises',
-        'Les notifications sont nécessaires pour les rappels d\'habitudes.'
-      );
-    }
-  };
 
   // Chargement des données
   const loadHabits = async () => {
@@ -90,7 +52,6 @@ export default function App() {
       const habitsData = await AsyncStorage.getItem(HABITS_STORAGE_KEY);
       if (habitsData) {
         const parsedHabits: Habit[] = JSON.parse(habitsData);
-        // Réinitialiser le statut de completion pour le jour actuel
         const today = new Date().toDateString();
         const updatedHabits = parsedHabits.map(habit => ({
           ...habit,
@@ -123,47 +84,18 @@ export default function App() {
         completedDates: [],
         reminderTime: hasReminder ? reminderTime : undefined,
         hasReminder,
-        notificationId: undefined,
       };
-
-      // Programmer la notification si nécessaire
-      if (hasReminder) {
-        await scheduleNotification(newHabit);
-      }
 
       const updatedHabits = [...habits, newHabit];
       setHabits(updatedHabits);
       await saveHabits(updatedHabits);
 
-      // Reset du formulaire
       setNewHabitName('');
       setSelectedIcon('💪');
       setHasReminder(false);
       setReminderTime('09:00');
       setModalVisible(false);
     }
-  };
-
-  // Programmer une notification
-  const scheduleNotification = async (habit: Habit) => {
-    if (!habit.reminderTime || Platform.OS === 'web') return;
-
-    const [hours, minutes] = habit.reminderTime.split(':').map(Number);
-    
-    const notificationId = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Rappel d\'habitude',
-        body: `N'oubliez pas: ${habit.name} ${habit.icon}`,
-        sound: true,
-      },
-      trigger: {
-        hour: hours,
-        minute: minutes,
-        repeats: true,
-      },
-    });
-
-    habit.notificationId = notificationId;
   };
 
   // Basculer le statut d'une habitude
@@ -175,10 +107,8 @@ export default function App() {
         let newCompletedDates = [...habit.completedDates];
 
         if (isCurrentlyCompleted) {
-          // Retirer la date d'aujourd'hui
           newCompletedDates = newCompletedDates.filter(date => date !== today);
         } else {
-          // Ajouter la date d'aujourd'hui
           newCompletedDates.push(today);
         }
 
@@ -206,10 +136,6 @@ export default function App() {
           text: 'Supprimer',
           style: 'destructive',
           onPress: async () => {
-            const habit = habits.find(h => h.id === id);
-            if (habit?.notificationId && Platform.OS !== 'web') {
-              await Notifications.cancelScheduledNotificationAsync(habit.notificationId);
-            }
             const updatedHabits = habits.filter(habit => habit.id !== id);
             setHabits(updatedHabits);
             await saveHabits(updatedHabits);
@@ -255,9 +181,7 @@ export default function App() {
               },
             ]}
           >
-            {item.completed && (
-              <Ionicons name="checkmark" size={18} color="white" />
-            )}
+            {item.completed && <Text style={styles.checkmark}>✓</Text>}
           </View>
         </View>
       </TouchableOpacity>
@@ -265,7 +189,7 @@ export default function App() {
         style={styles.deleteButton}
         onPress={() => deleteHabit(item.id)}
       >
-        <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
+        <Text style={styles.deleteButtonText}>🗑️</Text>
       </TouchableOpacity>
     </View>
   );
@@ -276,7 +200,6 @@ export default function App() {
     
     return (
       <View style={styles.container}>
-        {/* En-tête avec statistiques */}
         <View style={[styles.statsContainer, { backgroundColor: theme.cardBackground }]}>
           <Text style={[styles.statsTitle, { color: theme.text }]}>
             Aujourd'hui
@@ -297,7 +220,6 @@ export default function App() {
           </Text>
         </View>
 
-        {/* Liste des habitudes */}
         <FlatList
           data={habits}
           renderItem={renderHabit}
@@ -316,28 +238,26 @@ export default function App() {
           }
         />
 
-        {/* Bouton d'ajout */}
         <TouchableOpacity
           style={[styles.addButton, { backgroundColor: theme.primary }]}
           onPress={() => setModalVisible(true)}
         >
-          <Ionicons name="add" size={24} color="white" />
+          <Text style={styles.addButtonText}>+</Text>
         </TouchableOpacity>
       </View>
     );
   };
 
-  // Rendu de la vue historique (simple calendrier)
+  // Rendu de la vue historique
   const renderHistoryView = () => {
     const getDatesInMonth = () => {
       const now = new Date();
       const year = now.getFullYear();
       const month = now.getMonth();
-      const firstDay = new Date(year, month, 1);
-      const lastDay = new Date(year, month + 1, 0);
       const dates = [];
+      const lastDay = new Date(year, month + 1, 0).getDate();
       
-      for (let i = 1; i <= lastDay.getDate(); i++) {
+      for (let i = 1; i <= lastDay; i++) {
         dates.push(new Date(year, month, i));
       }
       return dates;
@@ -427,16 +347,11 @@ export default function App() {
             style={[styles.tabItem, currentView === 'main' && { backgroundColor: theme.primary }]}
             onPress={() => setCurrentView('main')}
           >
-            <Ionicons 
-              name="home" 
-              size={20} 
-              color={currentView === 'main' ? 'white' : theme.textSecondary} 
-            />
             <Text style={[
               styles.tabText, 
               { color: currentView === 'main' ? 'white' : theme.textSecondary }
             ]}>
-              Accueil
+              🏠 Accueil
             </Text>
           </TouchableOpacity>
 
@@ -444,16 +359,11 @@ export default function App() {
             style={[styles.tabItem, currentView === 'history' && { backgroundColor: theme.primary }]}
             onPress={() => setCurrentView('history')}
           >
-            <Ionicons 
-              name="calendar" 
-              size={20} 
-              color={currentView === 'history' ? 'white' : theme.textSecondary} 
-            />
             <Text style={[
               styles.tabText, 
               { color: currentView === 'history' ? 'white' : theme.textSecondary }
             ]}>
-              Historique
+              📅 Historique
             </Text>
           </TouchableOpacity>
 
@@ -461,11 +371,9 @@ export default function App() {
             style={styles.themeToggle}
             onPress={() => setIsDarkMode(!isDarkMode)}
           >
-            <Ionicons 
-              name={isDarkMode ? "sunny" : "moon"} 
-              size={20} 
-              color={theme.textSecondary} 
-            />
+            <Text style={{ fontSize: 20 }}>
+              {isDarkMode ? "☀️" : "🌙"}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -611,7 +519,6 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   tabText: {
-    marginLeft: 8,
     fontSize: 14,
     fontWeight: '500',
   },
@@ -717,9 +624,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  checkmark: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   deleteButton: {
     padding: 8,
     marginLeft: 8,
+  },
+  deleteButtonText: {
+    fontSize: 16,
   },
   addButton: {
     position: 'absolute',
@@ -735,6 +650,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+  },
+  addButtonText: {
+    color: 'white',
+    fontSize: 24,
+    fontWeight: 'bold',
   },
   emptyState: {
     alignItems: 'center',
